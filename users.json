@@ -1,0 +1,62 @@
+{
+  "838709240": {
+    "name": "/start",
+    "interest": "/start",
+    "score": 2,
+    "level": 1,
+    "messagesToday": 0,
+    "lastReset": 1770897338203,
+    "joined": 1770897338203,
+    "lastActive": "Thu Feb 12 2026",
+    "premium": false,
+    "premiumType": null
+  },
+  "7372338697": {
+    "name": "Hey",
+    "premium": false,
+    "premiumExpires": null,
+    "trust": 10,
+    "attachment": 5,
+    "interest": 18,
+    "ego": 70,
+    "consistency": 8,
+    "level": 4,
+    "mood": "calm",
+    "streak": 1,
+    "lastActiveDay": "Thu Feb 12 2026",
+    "joinDate": 1770839667307,
+    "dailyCount": 4,
+    "lastReset": 1770839667307,
+    "lastActive": "Thu Feb 12 2026"
+  },
+  "6047789819": {
+    "name": "/stats",
+    "interest": "/stats",
+    "score": 0,
+    "level": 1,
+    "messagesToday": 6,
+    "lastReset": 1770841043685,
+    "joined": 1770841043685,
+    "lastActive": 1770899900872,
+    "premium": false,
+    "premiumType": null,
+    "lastDate": "Thu Feb 12 2026",
+    "relationship": null,
+    "mood": "neutral",
+    "teaseStage": 0,
+    "dailyMessages": null,
+    "relationshipScore": null
+  },
+  "8486374026": {
+    "name": "/start",
+    "interest": "Hi dhanya",
+    "score": 0,
+    "level": 1,
+    "messagesToday": 0,
+    "lastReset": 1770897182249,
+    "joined": 1770897182249,
+    "lastActive": "Thu Feb 12 2026",
+    "premium": false,
+    "premiumType": null
+  }
+}

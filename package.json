@@ -1,0 +1,19 @@
+{
+  "name": "tg-bot",
+  "version": "1.0.0",
+  "description": "Dhanya Unfiltered Bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "dotenv": "^17.2.4",
+    "express": "^5.1.0",
+    "groq-sdk": "^0.37.0",
+    "node-telegram-bot-api": "^0.67.0"
+  }
+}
