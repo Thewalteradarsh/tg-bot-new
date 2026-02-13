@@ -1,272 +1,224 @@
 require("dotenv").config();
+const express = require("express");
 const TelegramBot = require("node-telegram-bot-api");
 const Groq = require("groq-sdk");
-const express = require("express");
-const fs = require("fs");
+const { Pool } = require("pg");
 
-console.log("The game is on Bruh");
+console.log("Smart Memory System Activated 🚀");
 
-// ===== CONFIG =====
+// ===== ENV =====
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
-const WEBHOOK_URL = process.env.WEBHOOK_URL; // https://your-app.onrender.com
-const ADMIN_ID = 6047789819;
+const WEBHOOK_URL = process.env.WEBHOOK_URL;
+const DATABASE_URL = process.env.DATABASE_URL;
+const PORT = process.env.PORT || 10000;
 
-const PORT = process.env.PORT || 3000;
-const DATA_FILE = "./data.json";
-
+// ===== INIT =====
 const app = express();
 app.use(express.json());
 
 const bot = new TelegramBot(BOT_TOKEN);
 const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-// ===== DATA STRUCTURE =====
-let data = {
-  users: {},
-  stats: {
-    totalUsers: 0,
-    totalMessages: 0,
-    dailyStats: {}
-  }
-};
+const pool = new Pool({
+  connectionString: DATABASE_URL,
+  ssl: { rejectUnauthorized: false },
+});
 
-if (fs.existsSync(DATA_FILE)) {
-  data = JSON.parse(fs.readFileSync(DATA_FILE));
+// ===== CONSTANTS =====
+const MAX_RECENT_MESSAGES = 50;
+const SUMMARIZE_THRESHOLD = 100;
+
+// ===== INIT DATABASE =====
+async function initDB() {
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS users (
+      id BIGINT PRIMARY KEY,
+      username TEXT,
+      last_active TIMESTAMP DEFAULT NOW(),
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS messages (
+      id SERIAL PRIMARY KEY,
+      user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+      role TEXT,
+      content TEXT,
+      created_at TIMESTAMP DEFAULT NOW()
+    );
+  `);
+
+  await pool.query(`
+    CREATE TABLE IF NOT EXISTS user_profile (
+      user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      summary TEXT,
+      relationship_level INT DEFAULT 0,
+      last_summarized_at TIMESTAMP
+    );
+  `);
+
+  console.log("Database Ready ✅");
 }
 
-// Ensure structure
-if (!data.users) data.users = {};
-if (!data.stats) data.stats = { totalUsers: 0, totalMessages: 0, dailyStats: {} };
-if (!data.stats.dailyStats) data.stats.dailyStats = {};
+initDB();
 
-function save() {
-  fs.writeFileSync(DATA_FILE, JSON.stringify(data, null, 2));
+// ===== SAVE MESSAGE =====
+async function saveMessage(userId, role, content) {
+  await pool.query(
+    "INSERT INTO messages (user_id, role, content) VALUES ($1,$2,$3)",
+    [userId, role, content]
+  );
+
+  // Keep only last 50
+  await pool.query(`
+    DELETE FROM messages
+    WHERE id NOT IN (
+      SELECT id FROM messages
+      WHERE user_id = $1
+      ORDER BY created_at DESC
+      LIMIT $2
+    )
+    AND user_id = $1
+  `, [userId, MAX_RECENT_MESSAGES]);
 }
 
-function todayKey() {
-  return new Date().toISOString().split("T")[0];
+// ===== GET MEMORY =====
+async function getRecentMessages(userId) {
+  const res = await pool.query(
+    "SELECT role, content FROM messages WHERE user_id=$1 ORDER BY created_at ASC",
+    [userId]
+  );
+  return res.rows;
 }
 
-// ===== USER INIT =====
-function getUser(id) {
-  if (!data.users[id]) {
-    data.users[id] = {
-      name: null,
-      anger: 0,
-      angerDecay: 0,
-      possessive: 0,
-      attachment: 0,
-      chatHistory: [],
-      memoryNotes: [],
-      lastReply: "",
-      messages: 0,
-      lastActive: Date.now()
-    };
-
-    data.stats.totalUsers++;
-
-    const today = todayKey();
-    if (!data.stats.dailyStats[today])
-      data.stats.dailyStats[today] = { users: 0, messages: 0 };
-
-    data.stats.dailyStats[today].users++;
-
-    save();
-  }
-  return data.users[id];
+// ===== GET SUMMARY =====
+async function getSummary(userId) {
+  const res = await pool.query(
+    "SELECT summary FROM user_profile WHERE user_id=$1",
+    [userId]
+  );
+  return res.rows[0]?.summary || "";
 }
 
-// ===== MEMORY EXTRACTION =====
-function extractMemory(text, user) {
-  text = text.toLowerCase();
+// ===== SUMMARIZATION =====
+async function maybeSummarize(userId) {
+  const res = await pool.query(
+    "SELECT COUNT(*) FROM messages WHERE user_id=$1",
+    [userId]
+  );
 
-  if (text.includes("trip")) user.memoryNotes.push("User planning a trip");
-  if (text.includes("exam")) user.memoryNotes.push("User has an exam");
-  if (text.includes("gym")) user.memoryNotes.push("User goes to gym");
+  const count = parseInt(res.rows[0].count);
 
-  if (user.memoryNotes.length > 10)
-    user.memoryNotes.shift();
-}
-
-// ===== SIGNAL DETECTION =====
-function detectSignals(text, user) {
-  text = text.toLowerCase();
-
-  if (/idiot|stupid|shut up|annoying|dumb|useless|crazy/.test(text)) {
-    user.anger += 2;
-    user.angerDecay = 0;
-  }
-
-  if (/sorry|please|forgive|my bad|calm|okay/.test(text)) {
-    user.angerDecay += 2;
-  } else {
-    user.angerDecay += 1;
-  }
-
-  if (/other girl|ex|another girl/.test(text)) {
-    user.possessive += 1;
-  }
-
-  if (/love|miss|care|hug|cute/.test(text)) {
-    user.attachment += 2;
-  }
-
-  if (user.angerDecay >= 8) {
-    user.anger = Math.max(user.anger - 1, 0);
-    user.angerDecay = 0;
-  }
-}
-
-// ===== BUILD PERSONALITY PROMPT =====
-function buildPrompt(user) {
-
-  let personality = `
-You are Dhanya.
-Confident, egoistic, playful, emotional and slightly possessive.
-Use emojis naturally.
-2-4 sentences.
-Never repeat same reply.
-Remember past topics and ask follow-up questions naturally.
-`;
-
-  if (user.anger >= 1 && user.anger <= 3)
-    personality += "You are slightly annoyed.\n";
-
-  if (user.anger >= 4 && user.anger <= 6)
-    personality += "You are angry. Push back strongly.\n";
-
-  if (user.anger >= 7)
-    personality += "You are very angry. Be cold and dominant.\n";
-
-  if (user.possessive > 0)
-    personality += "You are possessive and react if user mentions other girls.\n";
-
-  if (user.attachment > 5 && Math.random() < 0.3)
-    personality += "Give a rare warm affectionate moment.\n";
-
-  if (user.memoryNotes.length > 0) {
-    personality += "Important user facts:\n";
-    user.memoryNotes.forEach(n => {
-      personality += "- " + n + "\n";
-    });
-  }
-
-  return personality;
-}
-
-// ===== MESSAGE HANDLER =====
-bot.on("message", async (msg) => {
-
-  const chatId = msg.chat.id;
-  const text = msg.text;
-  if (!text) return;
-
-  const user = getUser(chatId);
-  user.lastActive = Date.now();
-
-  data.stats.totalMessages++;
-
-  const today = todayKey();
-  if (!data.stats.dailyStats[today])
-    data.stats.dailyStats[today] = { users: 0, messages: 0 };
-
-  data.stats.dailyStats[today].messages++;
-  user.messages++;
-
-  save();
-
-  // ===== ADMIN COMMANDS =====
-  if (chatId === ADMIN_ID) {
-
-    if (text === "/admin") {
-      return bot.sendMessage(chatId,
-`📊 Admin Panel
-
-Total Users: ${data.stats.totalUsers}
-Total Messages: ${data.stats.totalMessages}`);
-    }
-
-    if (text === "/growth") {
-      const days = Object.keys(data.stats.dailyStats).slice(-7);
-      let graph = "📈 Growth (Last 7 Days)\n\n";
-      days.forEach(day => {
-        const users = data.stats.dailyStats[day].users || 0;
-        graph += `${day} | ${"█".repeat(users)} (${users})\n`;
-      });
-      return bot.sendMessage(chatId, graph);
-    }
-  }
-
-  // ===== NAME SET =====
-  if (!user.name) {
-    user.name = text.trim();
-    save();
-    return bot.sendMessage(chatId,
-      `Hmm… ${user.name}? Fine. Don't disappoint me 😌`);
-  }
-
-  // ===== STORE CHAT HISTORY =====
-  user.chatHistory.push({ role: "user", content: text });
-  if (user.chatHistory.length > 20)
-    user.chatHistory.shift();
-
-  extractMemory(text, user);
-  detectSignals(text, user);
-
-  const systemPrompt = buildPrompt(user);
-
-  try {
+  if (count >= SUMMARIZE_THRESHOLD) {
+    const history = await getRecentMessages(userId);
 
     const completion = await groq.chat.completions.create({
-      model: "llama-3.1-8b-instant",
+      model: "llama3-8b-8192",
       messages: [
-        { role: "system", content: systemPrompt },
-        ...user.chatHistory
-      ]
+        {
+          role: "system",
+          content: "Summarize this user's personality, emotional traits, interests and important life events."
+        },
+        ...history
+      ],
     });
 
-    let reply = completion.choices[0].message.content;
+    const summary = completion.choices[0].message.content;
 
-    if (reply === user.lastReply)
-      reply += " Don't make me repeat myself 😒";
+    await pool.query(`
+      INSERT INTO user_profile (user_id, summary, last_summarized_at)
+      VALUES ($1,$2,NOW())
+      ON CONFLICT (user_id)
+      DO UPDATE SET summary=$2, last_summarized_at=NOW()
+    `, [userId, summary]);
 
-    user.lastReply = reply;
+    // Keep only last 20 after summarizing
+    await pool.query(`
+      DELETE FROM messages
+      WHERE id NOT IN (
+        SELECT id FROM messages
+        WHERE user_id = $1
+        ORDER BY created_at DESC
+        LIMIT 20
+      )
+      AND user_id = $1
+    `, [userId]);
+  }
+}
 
-    user.chatHistory.push({ role: "assistant", content: reply });
-    if (user.chatHistory.length > 20)
-      user.chatHistory.shift();
+// ===== CLEANUP 90 DAYS =====
+async function cleanupInactiveUsers() {
+  await pool.query(`
+    DELETE FROM users
+    WHERE last_active < NOW() - INTERVAL '90 days'
+  `);
 
-    save();
+  console.log("Inactive users cleaned 🧹");
+}
 
-    setTimeout(() => {
-      bot.sendMessage(chatId, reply);
-    }, 2000);
+// Run cleanup daily
+setInterval(() => {
+  cleanupInactiveUsers();
+}, 24 * 60 * 60 * 1000);
+
+// ===== WEBHOOK =====
+app.post("/webhook", async (req, res) => {
+  const message = req.body.message;
+  if (!message || !message.text) return res.sendStatus(200);
+
+  const chatId = message.chat.id;
+  const text = message.text;
+
+  try {
+    // Insert user if new
+    await pool.query(`
+      INSERT INTO users (id, username)
+      VALUES ($1,$2)
+      ON CONFLICT (id) DO NOTHING
+    `, [chatId, message.from.username || "unknown"]);
+
+    // Update last active
+    await pool.query(
+      "UPDATE users SET last_active = NOW() WHERE id=$1",
+      [chatId]
+    );
+
+    await saveMessage(chatId, "user", text);
+
+    const summary = await getSummary(chatId);
+    const history = await getRecentMessages(chatId);
+
+    const completion = await groq.chat.completions.create({
+      model: "llama3-8b-8192",
+      messages: [
+        {
+          role: "system",
+          content: `You are Dhanya. Emotional, intelligent, slightly egoistic but human. Remember past chats. User summary: ${summary}`
+        },
+        ...history
+      ],
+    });
+
+    const reply = completion.choices[0].message.content;
+
+    await saveMessage(chatId, "assistant", reply);
+
+    await maybeSummarize(chatId);
+
+    await bot.sendMessage(chatId, reply);
 
   } catch (err) {
-    console.log(err.message);
-    bot.sendMessage(chatId, "System glitch.");
+    console.error(err);
+    await bot.sendMessage(chatId, "Something went wrong.");
   }
 
-});
-
-// ===== WEBHOOK ROUTE =====
-app.post(`/webhook/${BOT_TOKEN}`, (req, res) => {
-  bot.processUpdate(req.body);
   res.sendStatus(200);
-});
-
-app.get("/", (req, res) => {
-  res.send("Bot is running.");
 });
 
 // ===== START SERVER =====
 app.listen(PORT, async () => {
-  console.log("Server running on port", PORT);
-
-  if (WEBHOOK_URL) {
-    const fullWebhook = `${WEBHOOK_URL}/webhook/${BOT_TOKEN}`;
-    await bot.setWebHook(fullWebhook);
-    console.log("Webhook set to:", fullWebhook);
-  }
+  console.log(`Server running on ${PORT}`);
+  await bot.setWebHook(`${WEBHOOK_URL}/webhook`);
 });
