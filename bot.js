@@ -23,6 +23,9 @@ const groq = new Groq({ apiKey: GROQ_API_KEY });
 const pool = new Pool({
   connectionString: DATABASE_URL,
   ssl: { rejectUnauthorized: false },
+  max: 5,                    // limit max connections
+  idleTimeoutMillis: 30000,  // close idle connections
+  connectionTimeoutMillis: 2000
 });
 
 // ===== CONSTANTS =====
