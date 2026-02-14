@@ -1,8 +1,7 @@
-import express from "express";
-import fetch from "node-fetch";
-import { createClient } from "@supabase/supabase-js";
-import Groq from "groq-sdk";
-import dotenv from "dotenv";
+const express = require("express");
+const { createClient } = require("@supabase/supabase-js");
+const Groq = require("groq-sdk");
+require("dotenv").config();
 
 dotenv.config();
 
