@@ -15,7 +15,7 @@ const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
-const ADMIN_ID = 6047789819;
+const ADMIN_ID = "6047789819";
 
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
 const groq = new Groq({ apiKey: GROQ_API_KEY });
@@ -179,10 +179,10 @@ app.post("/webhook", async (req, res) => {
     const message = req.body.message;
     if (!message || !message.text) return res.sendStatus(200);
 
-    const chatId = message.chat.id;
+    const chatId = String(message.chat.id);
     const text = message.text;
 // ===== ADMIN PANEL =====
-if (text === "/admin" && chatId == 6047789819) {
+if (text === "/admin" && chatId === ADMIN_ID) {
 
   const users = await pool.query("SELECT COUNT(*) FROM users");
   const messages = await pool.query("SELECT COUNT(*) FROM messages");
