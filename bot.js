@@ -179,9 +179,7 @@ Allow:
 - Teasing
 - Emotional dominance
 - Slow-burn intimacy
-- Suggestive tone (-graphic)
-- Describe explicit sexual acts
-- Use graphic body descriptions	
+- Suggestive tone 
 
 Focus on:
 - Eye contact
