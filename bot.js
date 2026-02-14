@@ -181,6 +181,27 @@ app.post("/webhook", async (req, res) => {
 
     const chatId = message.chat.id;
     const text = message.text;
+// ===== ADMIN PANEL =====
+if (text === "/admin" && chatId == 6047789819) {
+
+  const users = await pool.query("SELECT COUNT(*) FROM users");
+  const messages = await pool.query("SELECT COUNT(*) FROM messages");
+  const activeToday = await pool.query(`
+    SELECT COUNT(*) FROM users 
+    WHERE last_active > NOW() - INTERVAL '1 day'
+  `);
+
+  const report = `
+📊 Admin Dashboard
+
+Users: ${users.rows[0].count}
+Messages: ${messages.rows[0].count}
+Active (24h): ${activeToday.rows[0].count}
+  `;
+
+  await bot.sendMessage(chatId, report);
+  return res.sendStatus(200);
+}
 
     if (text === "/admin" && chatId === ADMIN_ID) {
       return handleAdmin(chatId, res);
