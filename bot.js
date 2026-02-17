@@ -80,10 +80,23 @@ app.post("/webhook", async (req, res) => {
     const text = message.text.trim();
 
     /* ===== ADMIN CHECK ===== */
-    if (text === "/admin" && chatId === ADMIN_ID) {
-      await handleAdmin(chatId);
-      return res.sendStatus(200);
-    }
+    /* ===== ADMIN CHECK ===== */
+if (text === "/admin" && Number(chatId) === ADMIN_ID) {
+
+  const { count: userCount } = await supabase
+    .from("users")
+    .select("*", { count: "exact", head: true });
+
+  const report = `
+📊 Admin Dashboard
+
+Users: ${userCount || 0}
+`;
+
+  await bot.sendMessage(chatId, report);
+
+  return res.sendStatus(200); // VERY IMPORTANT
+}
 
     /* ===== GET OR CREATE USER ===== */
     let { data: user } = await supabase
