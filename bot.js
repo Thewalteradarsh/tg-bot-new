@@ -1,104 +1,89 @@
-import express from "express";
-import axios from "axios";
-import dotenv from "dotenv";
-import Groq from "groq-sdk";
-import { createClient } from "@supabase/supabase-js";
+const express = require("express");
+const dotenv = require("dotenv");
+const TelegramBot = require("node-telegram-bot-api");
+const { createClient } = require("@supabase/supabase-js");
+const Groq = require("groq-sdk");
 
 dotenv.config();
 
 const app = express();
 app.use(express.json());
 
+/* ==============================
+   ENV
+============================== */
+
 const TELEGRAM_TOKEN = process.env.TELEGRAM_TOKEN;
 const GROQ_API_KEY = process.env.GROQ_API_KEY;
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
-const ADMIN_ID = "6047789819";
+const ADMIN_ID = 6047789819; // YOUR CHAT ID
 
-const groq = new Groq({ apiKey: GROQ_API_KEY });
+/* ==============================
+   CLIENTS
+============================== */
+
+const bot = new TelegramBot(TELEGRAM_TOKEN);
 const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
+const groq = new Groq({ apiKey: GROQ_API_KEY });
 
-const TELEGRAM_API = `https://api.telegram.org/bot${TELEGRAM_TOKEN}`;
+/* ==============================
+   SYSTEM PROMPT
+============================== */
 
-/* =========================
-   SEND MESSAGE
-========================= */
-async function sendMessage(chatId, text) {
-  await axios.post(`${TELEGRAM_API}/sendMessage`, {
-    chat_id: chatId,
-    text,
-  });
-}
+const systemPrompt = `
+You are Dhanya.
 
-/* =========================
-   ADMIN PANEL
-========================= */
-async function handleAdmin(chatId) {
-  const { count: users } = await supabase
-    .from("users")
-    .select("*", { count: "exact", head: true });
-
-  const { count: active24h } = await supabase
-    .from("users")
-    .select("*", { count: "exact", head: true })
-    .gt("last_active", new Date(Date.now() - 86400000).toISOString());
-
-  const report = `
-📊 Admin Dashboard
-
-Users: ${users}
-Active (24h): ${active24h}
+Short replies only.
+1-3 lines maximum.
+Natural WhatsApp vibe.
+Playful. Slight ego.
+Never long paragraphs.
+Stay human.
 `;
 
-  await sendMessage(chatId, report.trim());
-}
-
-/* =========================
-   TOPIC INITIATOR
-========================= */
-function randomTopic() {
-  const topics = [
-    "Miss me today?",
-    "Tell me one secret.",
-    "Why are you quiet?",
-    "Are you thinking about someone?",
-    "What’s your mood right now?"
-  ];
-  return topics[Math.floor(Math.random() * topics.length)];
-}
-
-/* =========================
+/* ==============================
    WEBHOOK
-========================= */
+============================== */
+
 app.post("/webhook", async (req, res) => {
   try {
     const message = req.body.message;
     if (!message || !message.text) return res.sendStatus(200);
 
-    const chatId = String(message.chat.id);
+    const chatId = Number(message.chat.id);
     const text = message.text.trim();
 
-    /* ===== ADMIN CHECK ===== */
-    /* ===== ADMIN CHECK ===== */
-if (text === "/admin" && Number(chatId) === ADMIN_ID) {
+    /* ==============================
+       ADMIN PANEL
+    ============================== */
 
-  const { count: userCount } = await supabase
-    .from("users")
-    .select("*", { count: "exact", head: true });
+    if (text === "/admin" && chatId === ADMIN_ID) {
 
-  const report = `
-📊 Admin Dashboard
+      const { count: userCount } = await supabase
+        .from("users")
+        .select("*", { count: "exact", head: true });
+
+      const { count: activeToday } = await supabase
+        .from("users")
+        .select("*", { count: "exact", head: true })
+        .gte("last_active", new Date(Date.now() - 24*60*60*1000).toISOString());
+
+      await bot.sendMessage(chatId,
+`📊 Admin Dashboard
 
 Users: ${userCount || 0}
-`;
+Active (24h): ${activeToday || 0}`
+      );
 
-  await bot.sendMessage(chatId, report);
+      return res.sendStatus(200);
+    }
 
-  return res.sendStatus(200); // VERY IMPORTANT
-}
+    /* ==============================
+       GET OR CREATE USER
+    ============================== */
 
-    /* ===== GET OR CREATE USER ===== */
     let { data: user } = await supabase
       .from("users")
       .select("*")
@@ -114,6 +99,7 @@ Users: ${userCount || 0}
         })
         .select()
         .single();
+
       user = data;
     }
 
@@ -122,45 +108,40 @@ Users: ${userCount || 0}
       .update({ last_active: new Date().toISOString() })
       .eq("id", chatId);
 
-    /* ===== TOPIC INITIATOR ===== */
-    if (text.toLowerCase() === "start topic") {
-      await sendMessage(chatId, randomTopic());
-      return res.sendStatus(200);
-    }
+    /* ==============================
+       AI RESPONSE
+    ============================== */
 
-    /* ===== AI RESPONSE ===== */
     const completion = await groq.chat.completions.create({
       model: "llama3-70b-8192",
       messages: [
-        {
-          role: "system",
-          content: `
-You are Dhanya.
-Short replies only.
-1–3 lines max.
-No long paragraphs.
-Natural WhatsApp tone.
-Slight ego allowed.
-`
-        },
+        { role: "system", content: systemPrompt },
         { role: "user", content: text }
       ],
+      temperature: 0.9
     });
 
     const reply = completion.choices[0].message.content;
 
-    await sendMessage(chatId, reply);
+    await bot.sendMessage(chatId, reply);
 
     return res.sendStatus(200);
+
   } catch (err) {
     console.error(err);
     return res.sendStatus(200);
   }
 });
 
-/* =========================
-   START SERVER
-========================= */
-app.listen(3000, () => {
-  console.log("Bot running...");
+/* ==============================
+   SERVER
+============================== */
+
+app.get("/", (req, res) => {
+  res.send("Bot is running");
+});
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+  console.log("Bot running on port " + PORT);
 });
